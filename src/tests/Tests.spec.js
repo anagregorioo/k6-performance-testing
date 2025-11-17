@@ -1,50 +1,40 @@
-import { htmlReport } from 'https://raw.githubusercontent.com/benc-uk/k6-reporter/latest/dist/bundle.js';
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 import http from 'k6/http';
-import { check } from 'k6';
+import { check, sleep } from 'k6';
 import { Trend, Rate } from 'k6/metrics';
 
-export const getContactsDuration = new Trend('get_contacts', true);
-export const RateContentOK = new Rate('content_OK');
+// Métricas solicitadas
+let gestTrend = new Trend('gest_duration');
+let statusRate = new Rate('status_ok');
+let errorRate = new Rate('errors');
 
-export const options = {
-  thresholds: {
-    http_req_failed: ['rate<0.30'],
-    get_contacts: ['p(99)<500'],
-    content_OK: ['rate>0.95']
-  },
+export let options = {
   stages: [
-    { duration: '3s', target: 2 },
-    { duration: '3s', target: 6 },
-    { duration: '3s', target: 9 }
-  ]
+    { duration: '10s', target: 7 },      // começa em 7 VUs
+    { duration: '200s', target: 92 },    // rampa até 92 VUs (3,5 minutos total)
+  ],
+  thresholds: {
+    'http_req_duration': ['p(90) < 6800'], // 90% abaixo de 6800ms
+    'gest_duration': ['p(90) < 6800'],     // trend validando duração
+    'errors': ['rate<0.25'],               // menos de 25% erros
+    'status_ok': ['rate>0.75'],            // pelo menos 75% OK
+  },
 };
 
-export function handleSummary(data) {
-  return {
-    './src/output/index.html': htmlReport(data),
-    stdout: textSummary(data, { indent: ' ', enableColors: true })
-  };
-}
-
 export default function () {
-  const baseUrl = 'https://test.k6.io/';
 
-  const params = {
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  };
+  const url = 'https://jsonplaceholder.typicode.com/posts';
 
-  const OK = 200;
+  const res = http.get(url, { tags: { name: 'gest' } });
 
-  const res = http.get(`${baseUrl}`, params);
+  // Métricas customizadas
+  gestTrend.add(res.timings.duration);
+  statusRate.add(res.status >= 200 && res.status < 400);
+  errorRate.add(res.status >= 400);
 
-  getContactsDuration.add(res.timings.duration);
-
-  RateContentOK.add(res.status === OK);
-
+  // Validação
   check(res, {
-    'GET Contacts - Status 200': () => res.status === OK
+    'status OK (2xx/3xx)': r => r.status >= 200 && r.status < 400,
   });
+
+  sleep(1);
 }
